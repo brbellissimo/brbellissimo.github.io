@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Pixel Glitch Text</title>
+  <style>
+    html, body { height: 100%; margin: 0; background:#0b0c10; }
+    canvas { display:block; width:100%; height:100%; }
+  </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<script>
+(async () => {
+  // ====== EDIT THESE ======
+  const reasons = ["GLORY TO MANKIND", "We are chasing ghosts", "EXISTENCE PRECEDES ESSENCE", "THE FUTURE IS MACHINE", "bryan johnson may be proud of you","uncharted territory ahead"];
+  const TEXT = reasons[Math.floor(Math.random() * reasons.length)];
+  const SUBTEXT = "don't die.";                // optional second line
+  const FONT_MAIN = "700 120px 'Segoe UI', Arial, sans-serif";
+  const FONT_SUB  = "600 42px 'Segoe UI', Arial, sans-serif";
+  const TEXT_COLOR = "#e7e7e7";
+  const BG_COLOR   = "#0b0c10";
+
+  // Pixelation / reveal
+  const BASE_PIXEL = 10;                  // base block size (px)
+  const REVEAL_SECONDS = 1.2;             // how fast it "builds"
+  const HOLD_CLEAN_AFTER = 0.35;          // seconds after reveal to keep clean
+
+  // Glitch characteristics
+  const GLITCH_PROB = 0.11;               // chance per frame to start glitch burst
+  const GLITCH_BURST_MS = [60, 220];      // duration range
+  const SLICE_MAX = 16;                   // max horizontal slices per burst
+  const SLICE_SHIFT = 70;                 // max px shift
+  const RGB_SPLIT = 7;                    // channel offset amount
+  const NOISE_ALPHA = 0.05;               // grain
+  const SCANLINE_ALPHA = 0.06;            // scanlines strength
+
+  // =======================
+
+  const canvas = document.getElementById("c");
+  const ctx = canvas.getContext("2d", { alpha: false });
+
+  // Offscreen: render clean text
+  const src = document.createElement("canvas");
+  const sctx = src.getContext("2d");
+
+  // Offscreen: working buffers for channel split
+  const buf = document.createElement("canvas");
+  const bctx = buf.getContext("2d");
+
+  const dpr = Math.max(1, window.devicePixelRatio || 1);
+
+  function resize() {
+    const w = Math.floor(window.innerWidth * dpr);
+    const h = Math.floor(window.innerHeight * dpr);
+    canvas.width = w; canvas.height = h;
+    src.width = w; src.height = h;
+    buf.width = w; buf.height = h;
+  }
+  window.addEventListener("resize", resize);
+  resize();
+
+  function drawCleanSource() {
+    const w = src.width, h = src.height;
+    sctx.clearRect(0,0,w,h);
+
+    // center layout
+    sctx.fillStyle = TEXT_COLOR;
+    sctx.textAlign = "center";
+    sctx.textBaseline = "middle";
+
+    sctx.font = FONT_MAIN;
+    const mainY = h * 0.48;
+    sctx.fillText(TEXT, w * 0.5, mainY);
+
+    if (SUBTEXT) {
+      sctx.font = FONT_SUB;
+      sctx.globalAlpha = 0.9;
+      sctx.fillText(SUBTEXT, w * 0.5, mainY + 92 * dpr);
+      sctx.globalAlpha = 1;
+    }
+  }
+
+  // Draw pixelated version of src onto ctx.
+  // reveal ∈ [0..1] controls how much of the pixels are drawn (random threshold).
+  function drawPixelated(reveal, pixelSize) {
+    const w = canvas.width, h = canvas.height;
+
+    // Background
+    ctx.fillStyle = BG_COLOR;
+    ctx.fillRect(0,0,w,h);
+
+    // Read src data once per frame (fast enough for moderate sizes; optimize if needed)
+    const img = sctx.getImageData(0, 0, w, h).data;
+
+    // We draw only blocks where alpha>0 and passing reveal threshold
+    // Use a deterministic-ish hash so it "builds" consistently across frames
+    for (let y = 0; y < h; y += pixelSize) {
+      for (let x = 0; x < w; x += pixelSize) {
+        const i = ((y * w + x) << 2);
+        const a = img[i + 3];
+        if (a < 10) continue;
+
+        // reveal gating
+        // hash in [0..1)
+        const r = hash2(x, y);
+        if (r > reveal) continue;
+
+        const rr = img[i], gg = img[i+1], bb = img[i+2];
+        ctx.fillStyle = `rgb(${rr},${gg},${bb})`;
+        ctx.fillRect(x, y, pixelSize, pixelSize);
+      }
+    }
+  }
+
+  function hash2(x, y) {
+    // lightweight 2D hash -> [0..1)
+    let n = (x * 374761393 + y * 668265263) ^ (x * y);
+    n = (n ^ (n >> 13)) * 1274126177;
+    n = (n ^ (n >> 16)) >>> 0;
+    return n / 4294967296;
+  }
+
+  // Glitch burst state
+  let glitchUntil = 0;
+
+  function applyGlitch(now) {
+    const w = canvas.width, h = canvas.height;
+
+    // Copy current frame into buf
+    bctx.clearRect(0,0,w,h);
+    bctx.drawImage(canvas, 0, 0);
+
+    // Horizontal slice shifts
+    const slices = 4 + Math.floor(Math.random() * SLICE_MAX);
+    for (let s = 0; s < slices; s++) {
+      const y = Math.floor(Math.random() * h);
+      const sliceH = Math.floor((8 + Math.random() * 60) * dpr);
+      const dx = Math.floor((Math.random() * 2 - 1) * SLICE_SHIFT * dpr);
+
+      ctx.drawImage(
+        buf,
+        0, y, w, sliceH,
+        dx, y, w, sliceH
+      );
+    }
+
+    // RGB split (channel offset look)
+    // We approximate by drawing the same buffer with small offsets + composite modes.
+    ctx.globalCompositeOperation = "screen";
+    ctx.globalAlpha = 0.35;
+
+    // Red-ish
+    ctx.drawImage(buf,  Math.floor(RGB_SPLIT * dpr), 0);
+    // Blue-ish
+    ctx.drawImage(buf, -Math.floor(RGB_SPLIT * dpr), 0);
+
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = "source-over";
+
+    // Occasional white noise band
+    if (Math.random() < 0.6) {
+      const bandY = Math.random() * h;
+      const bandH = (10 + Math.random() * 40) * dpr;
+      ctx.fillStyle = `rgba(255,255,255,${0.06})`;
+      ctx.fillRect(0, bandY, w, bandH);
+    }
+  }
+
+  function overlayScanlinesAndNoise() {
+    const w = canvas.width, h = canvas.height;
+
+    // scanlines
+    ctx.fillStyle = `rgba(0,0,0,${SCANLINE_ALPHA})`;
+    const step = Math.max(2, Math.floor(4 * dpr));
+    for (let y = 0; y < h; y += step) {
+      ctx.fillRect(0, y, w, 1);
+    }
+
+    // noise
+    ctx.fillStyle = `rgba(255,255,255,${NOISE_ALPHA})`;
+    const dots = Math.floor((w*h) / (22000 * dpr)); // density
+    for (let i = 0; i < dots; i++) {
+      const x = Math.random() * w;
+      const y = Math.random() * h;
+      ctx.fillRect(x, y, 1, 1);
+    }
+  }
+
+  const t0 = performance.now();
+  function frame(now) {
+    const elapsed = (now - t0) / 1000;
+
+    drawCleanSource();
+
+    // Reveal curve: 0..1
+    const reveal = Math.min(1, elapsed / REVEAL_SECONDS);
+    // Pixel size ramps down as reveal progresses (chunky -> finer)
+    const pixelSize = Math.max(2 * dpr, Math.floor((BASE_PIXEL * (1.35 - reveal)) * dpr));
+
+    drawPixelated(reveal, pixelSize);
+
+    // After mostly revealed, blend in crisp source for the "logo lock" feel
+    if (reveal >= 1) {
+      const holdT = elapsed - REVEAL_SECONDS;
+      const alpha = Math.min(1, holdT / HOLD_CLEAN_AFTER);
+      ctx.globalAlpha = alpha;
+      ctx.drawImage(src, 0, 0);
+      ctx.globalAlpha = 1;
+    }
+
+    // Glitch bursts: trigger randomly, last briefly
+    if (now > glitchUntil && Math.random() < GLITCH_PROB) {
+      const [a,b] = GLITCH_BURST_MS;
+      glitchUntil = now + (a + Math.random() * (b - a));
+    }
+    if (now < glitchUntil) applyGlitch(now);
+
+    overlayScanlinesAndNoise();
+
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
