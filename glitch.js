@@ -2,7 +2,7 @@ const API_URL = "reasons.json"
 const SUBTEXT = "YoRHa"
 
 const SHOW_INTERVAL = 10000
-const GLITCH_DURATION = 2000
+const GLITCH_DURATION = 3000
 
 let reasons = []
 let TEXT = ""
